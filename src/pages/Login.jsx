@@ -37,10 +37,8 @@ export default function Login() {
       <div className="relative w-full max-w-sm">
         <div className="bg-surface-900 border border-white/[0.06] rounded-2xl p-8">
           <div className="flex flex-col items-center mb-8">
-            <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-brand-500 mb-5">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="m8 3 4 8 5-5 2 15H2L8 3z" />
-              </svg>
+            <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-white p-1 mb-5 shadow-sm border border-white/[0.08]">
+              <img src="/logo.png" alt="Andes Laundry Logo" className="w-full h-full object-contain rounded-xl" />
             </div>
             <h1 className="text-xl font-semibold text-white">Andes Laundry</h1>
             <p className="text-sm text-surface-400 mt-1">Sign in to continue</p>

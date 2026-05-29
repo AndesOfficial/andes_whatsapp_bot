@@ -1,7 +1,6 @@
 import {
   MessageSquare,
   Package,
-  Mountain,
   LayoutDashboard,
   Settings,
   Bell,
@@ -54,8 +53,8 @@ export default function Sidebar({ unreadCount = 0 }) {
       >
         {/* Brand */}
       <div className={`flex items-center gap-3 px-4 h-16 border-b border-white/[0.06] shrink-0 ${collapsed ? 'justify-center' : ''}`}>
-        <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-brand-500 shrink-0">
-          <Mountain className="w-4.5 h-4.5 text-white" />
+        <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-white p-0.5 shrink-0 border border-white/[0.08]">
+          <img src="/logo.png" alt="Andes Laundry Logo" className="w-full h-full object-contain rounded-lg" />
         </div>
         {!collapsed && (
           <div className="animate-slide-in overflow-hidden">
