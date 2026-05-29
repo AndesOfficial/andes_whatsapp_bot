@@ -52,16 +52,11 @@ export default function ChatWindow({
         "flex-col items-center justify-center flex-1 bg-surface-950",
         isMobileHidden ? "hidden md:flex" : "flex"
       )}>
-        <div className="relative mb-8">
-          <div className="absolute inset-0 rounded-full bg-brand-500/10 blur-3xl scale-[2]" />
-          <div className="relative flex items-center justify-center w-20 h-20 rounded-2xl bg-white/[0.04] border border-white/[0.06] rotate-6">
-            <MessageSquareText className="w-8 h-8 text-brand-400/50 -rotate-6" />
+        <div className="mb-6">
+          <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
+            <MessageSquareText className="w-7 h-7 text-surface-500" />
           </div>
         </div>
-        <h3 className="text-lg font-bold text-surface-200 mb-2">No Chat Selected</h3>
-        <p className="text-[13px] text-surface-500 max-w-[240px] text-center leading-relaxed">
-          Pick a conversation from the left to start viewing messages
-        </p>
       </div>
     )
   }
@@ -81,7 +76,7 @@ export default function ChatWindow({
             <ChevronLeft className="w-5 h-5" />
           </button>
           <div className="relative">
-            <div className="flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-br from-brand-500 to-purple-500 text-white text-[11px] font-bold">
+            <div className="flex items-center justify-center w-9 h-9 rounded-full bg-brand-500 text-white text-[11px] font-bold">
               {selectedPhone.slice(-2)}
             </div>
             <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-whatsapp border-2 border-[#0d1117]" />
@@ -110,13 +105,7 @@ export default function ChatWindow({
       <div
         ref={chatContainerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-5 py-4 relative"
-        style={{
-          backgroundImage: `
-            radial-gradient(ellipse at 10% 90%, rgba(99,102,241,0.04) 0%, transparent 50%),
-            radial-gradient(ellipse at 90% 10%, rgba(139,92,246,0.03) 0%, transparent 50%)
-          `,
-        }}
+        className="flex-1 overflow-y-auto px-5 py-4"
       >
         {Object.entries(groupedMessages).map(([dateKey, msgs]) => (
           <div key={dateKey}>

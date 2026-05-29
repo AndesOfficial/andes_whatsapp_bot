@@ -1,16 +1,17 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-50: #eef2ff;
-  --color-brand-100: #e0e7ff;
-  --color-brand-200: #c7d2fe;
-  --color-brand-300: #a5b4fc;
-  --color-brand-400: #818cf8;
-  --color-brand-500: #6366f1;
-  --color-brand-600: #4f46e5;
-  --color-brand-700: #4338ca;
-  --color-brand-800: #3730a3;
-  --color-brand-900: #312e81;
+  /* Brand — derived from #0890f1 */
+  --color-brand-50: #e8f4fe;
+  --color-brand-100: #c5e3fc;
+  --color-brand-200: #8ec8f9;
+  --color-brand-300: #57adf5;
+  --color-brand-400: #2d9bf3;
+  --color-brand-500: #0890f1;
+  --color-brand-600: #0678c9;
+  --color-brand-700: #055fa0;
+  --color-brand-800: #044878;
+  --color-brand-900: #033155;
 
   --color-surface-50: #f8fafc;
   --color-surface-100: #f1f5f9;
@@ -22,9 +23,9 @@
   --color-surface-700: #334155;
   --color-surface-800: #1e293b;
   --color-surface-900: #0f172a;
-  --color-surface-925: #0d1117;
-  --color-surface-950: #020617;
-  --color-surface-975: #0a0e1a;
+  --color-surface-925: #0c1220;
+  --color-surface-950: #060b14;
+  --color-surface-975: #080d16;
 
   --color-whatsapp: #25D366;
   --color-whatsapp-dark: #128C7E;
@@ -45,7 +46,7 @@
 
   body {
     font-family: var(--font-sans);
-    background-color: #0a0e1a;
+    background-color: var(--color-surface-950);
     color: var(--color-surface-100);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -61,12 +62,12 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgba(100, 116, 139, 0.3);
+    background: rgba(100, 116, 139, 0.25);
     border-radius: 10px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(100, 116, 139, 0.5);
+    background: rgba(100, 116, 139, 0.45);
   }
 }
 
@@ -93,45 +94,45 @@
     inset: 0;
     border-radius: inherit;
     padding: 1px;
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.1), transparent);
+    background: linear-gradient(135deg, rgba(8, 144, 241, 0.25), transparent);
     mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     mask-composite: exclude;
     -webkit-mask-composite: xor;
     pointer-events: none;
   }
 
-  .stat-glow-purple {
-    box-shadow: 0 0 40px -10px rgba(139, 92, 246, 0.3);
+  .stat-glow-blue {
+    box-shadow: 0 0 30px -10px rgba(8, 144, 241, 0.25);
   }
 
   .stat-glow-amber {
-    box-shadow: 0 0 40px -10px rgba(245, 158, 11, 0.3);
-  }
-
-  .stat-glow-blue {
-    box-shadow: 0 0 40px -10px rgba(59, 130, 246, 0.3);
+    box-shadow: 0 0 30px -10px rgba(245, 158, 11, 0.25);
   }
 
   .stat-glow-green {
-    box-shadow: 0 0 40px -10px rgba(16, 185, 129, 0.3);
+    box-shadow: 0 0 30px -10px rgba(16, 185, 129, 0.25);
+  }
+
+  .stat-glow-purple {
+    box-shadow: 0 0 30px -10px rgba(99, 102, 241, 0.25);
   }
 
   @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(8px); }
+    from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: translateY(0); }
   }
 
   .animate-fade-in {
-    animation: fadeIn 0.3s ease-out forwards;
+    animation: fadeIn 0.25s ease-out forwards;
   }
 
   @keyframes slideIn {
-    from { opacity: 0; transform: translateX(-8px); }
+    from { opacity: 0; transform: translateX(-6px); }
     to { opacity: 1; transform: translateX(0); }
   }
 
   .animate-slide-in {
-    animation: slideIn 0.25s ease-out forwards;
+    animation: slideIn 0.2s ease-out forwards;
   }
 
   @keyframes pulse-dot {

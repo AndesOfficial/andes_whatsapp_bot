@@ -116,7 +116,7 @@ export default function ContactList({
                   <div className={cn(
                     "flex items-center justify-center w-10 h-10 rounded-full text-[12px] font-bold",
                     isSelected
-                      ? "bg-gradient-to-br from-brand-500 to-purple-500 text-white"
+                      ? "bg-brand-500 text-white"
                       : "bg-white/[0.08] text-surface-300 border border-white/[0.06]"
                   )}>
                     {contact.phone.slice(-2)}

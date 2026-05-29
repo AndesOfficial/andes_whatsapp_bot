@@ -40,10 +40,9 @@ export default function OrderTable({ filteredOrders, handleStatusChange, updatin
   if (filteredOrders.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full">
-        <div className="relative mb-6">
-          <div className="absolute inset-0 rounded-full bg-brand-500/10 blur-2xl scale-[2]" />
-          <div className="relative flex items-center justify-center w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <Package className="w-7 h-7 text-surface-500/50" />
+        <div className="mb-4">
+          <div className="flex items-center justify-center w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
+            <Package className="w-6 h-6 text-surface-500" />
           </div>
         </div>
         <p className="text-[14px] font-semibold text-surface-300">No orders found</p>

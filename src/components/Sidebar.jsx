@@ -54,7 +54,7 @@ export default function Sidebar({ unreadCount = 0 }) {
       >
         {/* Brand */}
       <div className={`flex items-center gap-3 px-4 h-16 border-b border-white/[0.06] shrink-0 ${collapsed ? 'justify-center' : ''}`}>
-        <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-purple-600 shadow-lg shadow-brand-500/25 shrink-0">
+        <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-brand-500 shrink-0">
           <Mountain className="w-4.5 h-4.5 text-white" />
         </div>
         {!collapsed && (
@@ -175,7 +175,7 @@ export default function Sidebar({ unreadCount = 0 }) {
         `}>
           <div className={`flex items-center gap-3 ${collapsed ? '' : 'px-3 py-2'}`}>
             <div className="relative shrink-0">
-              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-purple-500 text-white text-[11px] font-bold">
+              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-brand-500 text-white text-[11px] font-bold">
                 {auth.currentUser?.email?.[0]?.toUpperCase() || 'A'}
               </div>
               <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-success border-2 border-[#0d1117]" />
