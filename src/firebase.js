@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -12,4 +13,12 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, import.meta.env.VITE_FIREBASE_DATABASE_ID);
+
+// Default database for orders and website data
+export const db = getFirestore(app);
+
+// andesdb for WhatsApp bot data
+export const botDb = getFirestore(app, import.meta.env.VITE_FIREBASE_DATABASE_ID);
+
+// Authentication
+export const auth = getAuth(app);

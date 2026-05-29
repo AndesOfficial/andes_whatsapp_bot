@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
-import { db } from '../firebase'
+import { db, botDb } from '../firebase'
 import {
   collection,
   query,
   orderBy,
   onSnapshot,
-  doc,
   updateDoc,
+  deleteDoc,
+  limit,
 } from 'firebase/firestore'
 import {
   Package,
@@ -14,13 +15,12 @@ import {
   Clock,
   Truck,
   CheckCircle2,
-  ChevronDown,
-  TrendingUp,
-  MapPin,
-  CalendarClock,
   X,
-  Sparkles,
 } from 'lucide-react'
+import toast from 'react-hot-toast'
+import { cn } from '../utils/cn'
+import StatCard from '../components/Orders/StatCard'
+import OrderTable from '../components/Orders/OrderTable'
 
 const STATUS_CONFIG = {
   PENDING: {
@@ -29,7 +29,6 @@ const STATUS_CONFIG = {
     bg: 'bg-amber-400/10',
     border: 'border-amber-400/20',
     icon: Clock,
-    selectBg: 'bg-amber-500/15',
   },
   'PICKED UP': {
     label: 'Picked Up',
@@ -37,7 +36,6 @@ const STATUS_CONFIG = {
     bg: 'bg-blue-400/10',
     border: 'border-blue-400/20',
     icon: Truck,
-    selectBg: 'bg-blue-500/15',
   },
   DELIVERED: {
     label: 'Delivered',
@@ -45,21 +43,7 @@ const STATUS_CONFIG = {
     bg: 'bg-emerald-400/10',
     border: 'border-emerald-400/20',
     icon: CheckCircle2,
-    selectBg: 'bg-emerald-500/15',
   },
-}
-
-const SERVICE_LABELS = {
-  dry_clean: { label: 'Dry Clean', emoji: '👔' },
-  wash_iron: { label: 'Wash & Iron', emoji: '👕' },
-  wash_fold: { label: 'Wash & Fold', emoji: '🧺' },
-}
-
-const PICKUP_LABELS = {
-  today_evening: 'Today Evening',
-  today_morning: 'Today Morning',
-  tomorrow_morning: 'Tomorrow Morning',
-  tomorrow_evening: 'Tomorrow Evening',
 }
 
 export default function Orders() {
@@ -67,27 +51,43 @@ export default function Orders() {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [updatingId, setUpdatingId] = useState(null)
+  const [limitCount, setLimitCount] = useState(50)
 
   useEffect(() => {
-    const q = query(collection(db, 'orders'), orderBy('created_at', 'desc'))
+    const q = query(collection(botDb, 'orders'), orderBy('createdAt', 'desc'), limit(limitCount))
     const unsub = onSnapshot(q, (snapshot) => {
       setOrders(
         snapshot.docs.map((docSnap) => ({ _docId: docSnap.id, ...docSnap.data() }))
       )
     }, (error) => {
       console.error('Orders listener error:', error)
+      toast.error('Failed to load orders')
     })
     return () => unsub()
-  }, [])
+  }, [limitCount])
 
   const handleStatusChange = async (docId, newStatus) => {
     setUpdatingId(docId)
     try {
-      await updateDoc(doc(db, 'orders', docId), { status: newStatus })
+      const orderRef = doc(botDb, 'orders', docId)
+      await updateDoc(orderRef, { status: newStatus })
+      toast.success('Status updated')
     } catch (err) {
       console.error('Failed to update status:', err)
+      toast.error('Failed to update order status')
     } finally {
       setTimeout(() => setUpdatingId(null), 800)
+    }
+  }
+
+  const handleDeleteOrder = async (docId) => {
+    if (!window.confirm('Are you sure you want to delete this order?')) return
+    try {
+      await deleteDoc(doc(botDb, 'orders', docId))
+      toast.success('Order deleted')
+    } catch (err) {
+      console.error('Failed to delete order:', err)
+      toast.error('Failed to delete order')
     }
   }
 
@@ -100,17 +100,6 @@ export default function Orders() {
     const matchesStatus = statusFilter === 'ALL' || o.status === statusFilter
     return matchesSearch && matchesStatus
   })
-
-  const formatDateTime = (timestamp) => {
-    if (!timestamp) return '—'
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp)
-    return date.toLocaleString([], {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  }
 
   const stats = {
     total: orders.length,
@@ -184,24 +173,7 @@ export default function Orders() {
         {/* ─── Stats Cards ─── */}
         <div className="grid grid-cols-4 gap-3 mb-5">
           {STAT_CARDS.map((stat) => (
-            <div
-              key={stat.label}
-              className={`
-                relative flex items-center gap-3.5 px-4 py-3.5 rounded-xl
-                bg-gradient-to-br ${stat.gradient}
-                border ${stat.borderColor}
-                ${stat.glow}
-                transition-all duration-300 hover:scale-[1.02] group
-              `}
-            >
-              <div className={`flex items-center justify-center w-10 h-10 rounded-xl ${stat.iconBg} transition-transform group-hover:scale-110`}>
-                <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
-              </div>
-              <div>
-                <p className={`text-2xl font-bold ${stat.valueColor} tabular-nums`}>{stat.value}</p>
-                <p className="text-[10px] font-semibold text-surface-400 uppercase tracking-widest">{stat.label}</p>
-              </div>
-            </div>
+            <StatCard key={stat.label} stat={stat} />
           ))}
         </div>
 
@@ -210,7 +182,6 @@ export default function Orders() {
           <div className="relative flex-1 max-w-xs">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-surface-500" />
             <input
-              id="order-search"
               type="text"
               placeholder="Search orders, phone, service..."
               value={searchQuery}
@@ -234,17 +205,15 @@ export default function Orders() {
               return (
                 <button
                   key={status}
-                  id={`filter-${status.replace(' ', '-').toLowerCase()}`}
                   onClick={() => setStatusFilter(status)}
-                  className={`
-                    flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all duration-200 cursor-pointer
-                    ${isActive
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all duration-200 cursor-pointer",
+                    isActive
                       ? status === 'ALL'
                         ? 'bg-brand-600/20 text-brand-400'
                         : `${cfg.bg} ${cfg.color}`
                       : 'text-surface-400 hover:text-surface-200 hover:bg-white/[0.04]'
-                    }
-                  `}
+                  )}
                 >
                   {status === 'ALL' ? (
                     'All'
@@ -261,121 +230,15 @@ export default function Orders() {
         </div>
       </div>
 
-      {/* ─── Table ─── */}
       <div className="flex-1 overflow-auto px-6 py-4">
-        {filteredOrders.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full">
-            <div className="relative mb-6">
-              <div className="absolute inset-0 rounded-full bg-brand-500/10 blur-2xl scale-[2]" />
-              <div className="relative flex items-center justify-center w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-                <Package className="w-7 h-7 text-surface-500/50" />
-              </div>
-            </div>
-            <p className="text-[14px] font-semibold text-surface-300">No orders found</p>
-            <p className="text-[12px] text-surface-500 mt-1">Try adjusting your search or filter criteria</p>
-          </div>
-        ) : (
-          <div className="rounded-xl border border-white/[0.06] overflow-hidden">
-            <table className="w-full text-[13px]">
-              <thead>
-                <tr className="bg-white/[0.03]">
-                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-surface-500">Order ID</th>
-                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-surface-500">Phone</th>
-                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-surface-500">Service</th>
-                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-surface-500">Address</th>
-                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-surface-500">Pickup</th>
-                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-surface-500">Created</th>
-                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-surface-500">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredOrders.map((order, idx) => {
-                  const statusCfg = STATUS_CONFIG[order.status] || STATUS_CONFIG.PENDING
-                  const StatusIcon = statusCfg.icon
-                  const isUpdating = updatingId === order._docId
-                  const serviceCfg = SERVICE_LABELS[order.service] || { label: order.service, emoji: '🧺' }
-                  const pickupLabel = PICKUP_LABELS[order.pickup] || order.pickup
-
-                  return (
-                    <tr
-                      key={order._docId}
-                      className={`
-                        border-t border-white/[0.04] transition-all duration-200
-                        hover:bg-white/[0.02] group
-                        ${isUpdating ? 'bg-brand-600/5' : ''}
-                      `}
-                      style={{ animationDelay: `${idx * 30}ms` }}
-                    >
-                      {/* Order ID */}
-                      <td className="px-4 py-3.5">
-                        <span className="font-mono text-[12px] font-bold text-brand-400 bg-brand-500/10 px-2 py-0.5 rounded-md border border-brand-500/15">
-                          {order.order_id || '—'}
-                        </span>
-                      </td>
-
-                      {/* Phone */}
-                      <td className="px-4 py-3.5">
-                        <span className="text-surface-200 font-medium">{order.phone || '—'}</span>
-                      </td>
-
-                      {/* Service */}
-                      <td className="px-4 py-3.5">
-                        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/[0.05] text-surface-300 text-[12px] font-medium border border-white/[0.06]">
-                          <span>{serviceCfg.emoji}</span>
-                          {serviceCfg.label}
-                        </span>
-                      </td>
-
-                      {/* Address */}
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-1.5 text-surface-300 max-w-[180px]">
-                          <MapPin className="w-3 h-3 text-surface-500 shrink-0" />
-                          <span className="truncate capitalize">{order.address || '—'}</span>
-                        </div>
-                      </td>
-
-                      {/* Pickup */}
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-1.5 text-surface-300">
-                          <CalendarClock className="w-3 h-3 text-surface-500 shrink-0" />
-                          <span className="text-[12px]">{pickupLabel || '—'}</span>
-                        </div>
-                      </td>
-
-                      {/* Created */}
-                      <td className="px-4 py-3.5">
-                        <span className="text-surface-400 text-[12px] tabular-nums">{formatDateTime(order.created_at)}</span>
-                      </td>
-
-                      {/* Status */}
-                      <td className="px-4 py-3.5">
-                        <div className="relative inline-block">
-                          <select
-                            id={`status-${order._docId}`}
-                            value={order.status}
-                            onChange={(e) => handleStatusChange(order._docId, e.target.value)}
-                            className={`
-                              appearance-none pl-3 pr-7 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer
-                              border transition-all duration-300
-                              ${statusCfg.bg} ${statusCfg.color} ${statusCfg.border}
-                              focus:outline-none focus:ring-1 focus:ring-brand-500/20
-                              ${isUpdating ? 'animate-pulse scale-105' : ''}
-                            `}
-                          >
-                            <option value="PENDING" className="bg-surface-900 text-surface-200">⏳ Pending</option>
-                            <option value="PICKED UP" className="bg-surface-900 text-surface-200">🚚 Picked Up</option>
-                            <option value="DELIVERED" className="bg-surface-900 text-surface-200">✅ Delivered</option>
-                          </select>
-                          <ChevronDown className={`absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 ${statusCfg.color} pointer-events-none`} />
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <OrderTable
+          filteredOrders={filteredOrders}
+          handleStatusChange={handleStatusChange}
+          updatingId={updatingId}
+          handleDeleteOrder={handleDeleteOrder}
+          onLoadMore={() => setLimitCount(prev => prev + 50)}
+          hasMore={orders.length === limitCount} // Simple heuristic: if we got exactly the limit, there might be more
+        />
       </div>
     </div>
   )
