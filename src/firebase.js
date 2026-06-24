@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -22,3 +23,6 @@ export const botDb = getFirestore(app, import.meta.env.VITE_FIREBASE_DATABASE_ID
 
 // Authentication
 export const auth = getAuth(app);
+
+// Storage for media uploads
+export const storage = getStorage(app);

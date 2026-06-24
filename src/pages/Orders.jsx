@@ -8,6 +8,8 @@ import {
   updateDoc,
   deleteDoc,
   limit,
+  doc,
+  getDocs,
 } from 'firebase/firestore'
 import {
   Package,
@@ -52,6 +54,70 @@ export default function Orders() {
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [updatingId, setUpdatingId] = useState(null)
   const [limitCount, setLimitCount] = useState(50)
+  const [customerNames, setCustomerNames] = useState({})
+
+  // Fetch customer names from users and orders (default DB) with caching
+  useEffect(() => {
+    const fetchNames = async () => {
+      try {
+        const cachedNames = sessionStorage.getItem('andes_customer_names')
+        if (cachedNames) {
+          setCustomerNames(JSON.parse(cachedNames))
+        }
+        
+        const nameMap = cachedNames ? JSON.parse(cachedNames) : {}
+        let updated = false
+
+        // 1. Fetch from users collection (default DB)
+        const usersSnapshot = await getDocs(query(collection(db, 'users'), limit(2000)))
+        usersSnapshot.docs.forEach(docSnap => {
+          const data = docSnap.data()
+          const nameVal = data.name || data.displayName || data.userName || data.customerName || (data.firstName ? `${data.firstName} ${data.lastName || ''}`.trim() : null)
+          if (nameVal) {
+            const phoneVal = data.mobile || data.phone || data.userPhone || data.phoneNumber;
+            if (phoneVal) {
+              const cleanPhone = String(phoneVal).replace(/\D/g, '')
+              if (cleanPhone.length >= 10) {
+                const p10 = cleanPhone.slice(-10)
+                if (nameMap[p10] !== nameVal) { nameMap[p10] = nameVal; updated = true; }
+                if (nameMap['91' + p10] !== nameVal) { nameMap['91' + p10] = nameVal; updated = true; }
+                if (nameMap[cleanPhone] !== nameVal) { nameMap[cleanPhone] = nameVal; updated = true; }
+              }
+            }
+          }
+        })
+
+        // 2. Fetch from orders collection (default DB) as fallback
+        try {
+          const ordersSnapshot = await getDocs(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(500)))
+          ordersSnapshot.docs.forEach(docSnap => {
+            const data = docSnap.data()
+            const nameVal = data.userName || data.name || data.customerName || data.displayName;
+            const phoneVal = data.userPhone || data.phone || data.mobile || data.phoneNumber;
+            if (nameVal && phoneVal) {
+              const cleanPhone = String(phoneVal).replace(/\D/g, '')
+              if (cleanPhone.length >= 10) {
+                const p10 = cleanPhone.slice(-10)
+                if (nameMap[p10] !== nameVal) { nameMap[p10] = nameVal; updated = true; }
+                if (nameMap['91' + p10] !== nameVal) { nameMap['91' + p10] = nameVal; updated = true; }
+                if (nameMap[cleanPhone] !== nameVal) { nameMap[cleanPhone] = nameVal; updated = true; }
+              }
+            }
+          })
+        } catch (orderErr) {
+          console.error('Failed to fetch fallback names from default orders:', orderErr)
+        }
+
+        if (updated || !cachedNames) {
+          sessionStorage.setItem('andes_customer_names', JSON.stringify(nameMap))
+          setCustomerNames(nameMap)
+        }
+      } catch (err) {
+        console.error('Failed to fetch customer names:', err)
+      }
+    }
+    fetchNames()
+  }, [])
 
   useEffect(() => {
     const q = query(collection(botDb, 'orders'), orderBy('createdAt', 'desc'), limit(limitCount))
@@ -92,6 +158,11 @@ export default function Orders() {
   }
 
   const filteredOrders = orders.filter((o) => {
+    // Only track WhatsApp bot orders. Exclude orders that look like they came from the website/app.
+    // Website orders typically have userId, email, items array, or totalAmount.
+    const isBotOrder = !o.userId && !o.email && !o.items && !o.totalAmount && !o.paymentMethod
+    if (!isBotOrder) return false
+
     const matchesSearch =
       (o.order_id || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (o.phone || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -154,6 +225,15 @@ export default function Orders() {
       borderColor: 'border-emerald-500/15',
     },
   ]
+
+  const mappedOrders = filteredOrders.map(order => {
+    const cleanPhone = (order.phone || '').replace(/\D/g, '')
+    const resolvedName = order.userName || order.name || order.customerName || customerNames[cleanPhone] || customerNames[order.phone];
+    return {
+      ...order,
+      userName: resolvedName
+    }
+  })
 
   return (
     <div className="flex flex-col h-full bg-[#0a0e1a]">
@@ -232,7 +312,7 @@ export default function Orders() {
 
       <div className="flex-1 overflow-auto px-6 py-4">
         <OrderTable
-          filteredOrders={filteredOrders}
+          filteredOrders={mappedOrders}
           handleStatusChange={handleStatusChange}
           updatingId={updatingId}
           handleDeleteOrder={handleDeleteOrder}

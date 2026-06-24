@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { db, botDb } from '../firebase'
+import { db, botDb, auth } from '../firebase'
 import {
   collection,
   query,
@@ -28,32 +28,65 @@ export default function LiveChat() {
   const [isBroadcastMode, setIsBroadcastMode] = useState(false)
   const [broadcastRecipients, setBroadcastRecipients] = useState([])
 
-  // Fetch customer names from orders (bot DB)
+  // Fetch customer names from users and orders (default DB) with caching
   useEffect(() => {
     const fetchNames = async () => {
       try {
-        const q = query(collection(botDb, 'orders'), orderBy('createdAt', 'desc'), limit(500))
-        const snapshot = await getDocs(q)
-        const nameMap = {}
-        snapshot.docs.forEach(docSnap => {
+        const cachedNames = sessionStorage.getItem('andes_customer_names')
+        if (cachedNames) {
+          setCustomerNames(JSON.parse(cachedNames))
+          // Still fetch in background to update cache
+        }
+        
+        const nameMap = cachedNames ? JSON.parse(cachedNames) : {}
+        let updated = false
+
+        // 1. Fetch from users collection (default DB)
+        const usersSnapshot = await getDocs(query(collection(db, 'users'), limit(2000)))
+        usersSnapshot.docs.forEach(docSnap => {
           const data = docSnap.data()
-          if (data.phone && data.name) {
-            const cleanPhone = String(data.phone).replace(/\D/g, '')
-            if (cleanPhone.length === 10) {
-              nameMap[cleanPhone] = data.name
-              nameMap['91' + cleanPhone] = data.name
-            } else if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
-              nameMap[cleanPhone] = data.name
-              nameMap[cleanPhone.slice(2)] = data.name
-            } else {
-              nameMap[cleanPhone] = data.name
+          const nameVal = data.name || data.displayName || data.userName || data.customerName || (data.firstName ? `${data.firstName} ${data.lastName || ''}`.trim() : null)
+          if (nameVal) {
+            const phoneVal = data.mobile || data.phone || data.userPhone || data.phoneNumber;
+            if (phoneVal) {
+              const cleanPhone = String(phoneVal).replace(/\D/g, '')
+              if (cleanPhone.length >= 10) {
+                const p10 = cleanPhone.slice(-10)
+                if (nameMap[p10] !== nameVal) { nameMap[p10] = nameVal; updated = true; }
+                if (nameMap['91' + p10] !== nameVal) { nameMap['91' + p10] = nameVal; updated = true; }
+                if (nameMap[cleanPhone] !== nameVal) { nameMap[cleanPhone] = nameVal; updated = true; }
+              }
             }
           }
         })
-        setCustomerNames(nameMap)
+
+        // 2. Fetch from orders collection (default DB) as fallback
+        try {
+          const ordersSnapshot = await getDocs(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(500)))
+          ordersSnapshot.docs.forEach(docSnap => {
+            const data = docSnap.data()
+            const nameVal = data.userName || data.name || data.customerName || data.displayName;
+            const phoneVal = data.userPhone || data.phone || data.mobile || data.phoneNumber;
+            if (nameVal && phoneVal) {
+              const cleanPhone = String(phoneVal).replace(/\D/g, '')
+              if (cleanPhone.length >= 10) {
+                const p10 = cleanPhone.slice(-10)
+                if (nameMap[p10] !== nameVal) { nameMap[p10] = nameVal; updated = true; }
+                if (nameMap['91' + p10] !== nameVal) { nameMap['91' + p10] = nameVal; updated = true; }
+                if (nameMap[cleanPhone] !== nameVal) { nameMap[cleanPhone] = nameVal; updated = true; }
+              }
+            }
+          })
+        } catch (orderErr) {
+          console.error('Failed to fetch fallback names from default orders:', orderErr)
+        }
+
+        if (updated || !cachedNames) {
+          sessionStorage.setItem('andes_customer_names', JSON.stringify(nameMap))
+          setCustomerNames(nameMap)
+        }
       } catch (err) {
         console.error('Failed to fetch customer names:', err)
-        toast.error(`Failed to fetch names: ${err.message}`, { duration: 5000 })
       }
     }
     fetchNames()
@@ -137,18 +170,13 @@ export default function LiveChat() {
     setDraft('')
 
     try {
-      // 1. Add to Firestore for local history (to botDb)
-      await addDoc(collection(botDb, 'chat_history'), {
-        phone: selectedPhone,
-        message: message,
-        sender: 'bot',
-        timestamp: serverTimestamp(),
-      })
-
-      // 2. Send via Bot API to WhatsApp
+      // Send via Bot API to WhatsApp (the backend will log it to Firestore)
       await fetch(`${import.meta.env.VITE_BOT_SERVER_URL}/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-API-Secret': import.meta.env.VITE_BOT_API_SECRET || ''
+        },
         body: JSON.stringify({ phone: selectedPhone, message }),
       })
     } catch (err) {
@@ -158,34 +186,35 @@ export default function LiveChat() {
     }
   }
 
-  const handleBroadcastSend = async (messageText) => {
-    let successCount = 0
-    const total = broadcastRecipients.length
+  const handleBroadcastSend = async (messageText, stats) => {
+    // BroadcastWindow handles actual sending in batches.
+    const { sent, failed, recipients: recipientPhones, imageUrl } = stats || { sent: 0, failed: 0, recipients: [], imageUrl: null }
+    const total = sent + failed
 
-    for (const phone of broadcastRecipients) {
-      try {
-        await addDoc(collection(botDb, 'chat_history'), {
-          phone,
-          message: messageText,
-          sender: 'bot',
-          timestamp: serverTimestamp(),
-        })
-
-        await fetch(`${import.meta.env.VITE_BOT_SERVER_URL}/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone, message: messageText }),
-        })
-        successCount++
-      } catch (err) {
-        console.error(`Failed to send to ${phone}:`, err)
+    // Log campaign to Firestore for audit trail (use default db which has write access)
+    try {
+      const logEntry = {
+        sentBy: auth.currentUser?.email || 'unknown',
+        message: messageText,
+        recipientCount: recipientPhones?.length || total,
+        sentCount: sent,
+        failedCount: failed,
+        recipientPhones: recipientPhones || [],
+        timestamp: serverTimestamp(),
+        aborted: total < (recipientPhones?.length || 0),
       }
+      if (imageUrl) logEntry.imageUrl = imageUrl
+      await addDoc(collection(db, 'broadcast_logs'), logEntry)
+    } catch (logErr) {
+      console.error('Failed to log broadcast campaign:', logErr)
     }
 
-    if (successCount === total) {
-      toast.success(`Successfully sent to all ${total} recipients`)
+    if (failed === 0 && sent > 0) {
+      toast.success(`Successfully sent to all ${sent} recipients`)
+    } else if (sent > 0) {
+      toast(`Sent to ${sent}/${total} recipients (${failed} failed)`, { icon: '⚠️' })
     } else {
-      toast.error(`Sent to ${successCount}/${total} recipients`)
+      toast.error('Failed to send messages')
     }
     
     // Reset and close
@@ -235,6 +264,7 @@ export default function LiveChat() {
         <BroadcastWindow
           recipients={broadcastRecipients}
           contacts={contacts}
+          setRecipients={setBroadcastRecipients}
           onCancel={() => {
             setIsBroadcastMode(false)
             setBroadcastRecipients([])
