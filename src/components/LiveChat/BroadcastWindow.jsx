@@ -1,10 +1,11 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Megaphone, Users, Loader2, Send, Upload, FileSpreadsheet, X, AlertTriangle, CheckCircle2, Clock, ShieldCheck, Info, Image, Link2, Trash2 } from 'lucide-react'
 import { formatPhoneDisplay } from '../../utils/phone'
 import { cn } from '../../utils/cn'
 import * as XLSX from 'xlsx'
-import { storage } from '../../firebase'
+import { storage, botDb, auth } from '../../firebase'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
+import { collection, addDoc, serverTimestamp, doc, setDoc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore'
 
 // ─── Constants ───────────────────────────────────────────────────
 const MAX_FILE_SIZE_MB = 5
@@ -119,9 +120,13 @@ export default function BroadcastWindow({
   setRecipients,
   isMobileHidden,
 }) {
-  const [draft, setDraft] = useState('')
+  const [selectedTemplate, setSelectedTemplate] = useState('fo_new_customers')
+  const [manualPhone, setManualPhone] = useState('')
   const [isSending, setIsSending] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
   const [sendProgress, setSendProgress] = useState({ sent: 0, failed: 0, total: 0 })
+  const [activeCampaign, setActiveCampaign] = useState(null)
+  const [isLoadingCampaign, setIsLoadingCampaign] = useState(true)
   const [importedFileName, setImportedFileName] = useState(null)
   const [importedCount, setImportedCount] = useState(0)
   const [rejectedCount, setRejectedCount] = useState(0)
@@ -133,7 +138,55 @@ export default function BroadcastWindow({
   const fileInputRef = useRef(null)
   const imageInputRef = useRef(null)
   const abortRef = useRef(false)
+  const pauseRef = useRef(false)
   const cooldownTimerRef = useRef(null)
+
+  // ─── Crash Recovery (Active Campaigns) ─────────────────────────
+  useEffect(() => {
+    const checkActiveCampaign = async () => {
+      const userId = auth.currentUser?.uid || 'default_user'
+      try {
+        const docRef = doc(botDb, 'active_campaigns', userId)
+        const snap = await getDoc(docRef)
+        if (snap.exists()) {
+          const data = snap.data()
+          if (data.recipients && data.recipients.length > 0) {
+            setActiveCampaign(data)
+            // Do not pre-fill yet, wait for user to click Resume
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load active campaign:', err)
+      } finally {
+        setIsLoadingCampaign(false)
+      }
+    }
+    checkActiveCampaign()
+  }, [])
+
+  const handleResumeCampaign = () => {
+    if (!activeCampaign) return
+    setRecipients(activeCampaign.recipients)
+    setSelectedTemplate(activeCampaign.template_name)
+    setSendProgress(activeCampaign.progress || { sent: 0, failed: 0, total: activeCampaign.recipients.length })
+    setActiveCampaign(null) // Exit recovery mode UI
+  }
+
+  const handleDiscardCampaign = async () => {
+    const userId = auth.currentUser?.uid || 'default_user'
+    try {
+      await deleteDoc(doc(botDb, 'active_campaigns', userId))
+    } catch(e) {}
+    setActiveCampaign(null)
+    setRecipients([])
+    setSendProgress({ sent: 0, failed: 0, total: 0 })
+  }
+
+  const handlePauseToggle = () => {
+    const newState = !pauseRef.current
+    pauseRef.current = newState
+    setIsPaused(newState)
+  }
 
   // Start cooldown countdown if needed
   const startCooldownTimer = useCallback(() => {
@@ -153,6 +206,22 @@ export default function BroadcastWindow({
       startCooldownTimer()
     }
   })
+
+  // ─── Manual Phone Add ──────────────────────────────────────────
+  const handleAddManualPhone = (e) => {
+    e?.preventDefault()
+    if (!manualPhone.trim()) return
+    const normalized = normalizePhone(manualPhone)
+    if (normalized) {
+      if (!recipients.includes(normalized)) {
+        setRecipients(prev => [...prev, normalized])
+      }
+      setManualPhone('')
+      setImportError(null)
+    } else {
+      setImportError('Invalid phone number format. Must be 10 digits.')
+    }
+  }
 
   // ─── File Upload ───────────────────────────────────────────────
   const handleFileUpload = useCallback((e) => {
@@ -258,44 +327,14 @@ export default function BroadcastWindow({
     setAttachedImage(null)
   }
 
-  const handleInsertLink = () => {
-    const url = prompt('Enter the URL to include in your message:')
-    if (url && url.trim()) {
-      setDraft(prev => {
-        const newDraft = prev + (prev.length > 0 && !prev.endsWith('\n') && !prev.endsWith(' ') ? '\n' : '') + url.trim()
-        return newDraft.slice(0, MAX_MESSAGE_LENGTH)
-      })
-    }
-  }
-
-  const handleDraftChange = (e) => {
-    const val = e.target.value
-    if (val.length <= MAX_MESSAGE_LENGTH) {
-      setDraft(val)
-    }
-  }
 
   // ─── Pre-send Validation ──────────────────────────────────────
   const handlePreSend = () => {
-    if (!draft.trim() || recipients.length === 0) return
-
-    // Check cooldown
-    const cooldown = getCooldownRemaining()
-    if (cooldown > 0) {
-      setCooldownLeft(cooldown)
-      startCooldownTimer()
-      return
-    }
-
-    // Check daily limit
+    if (recipients.length === 0) return
+    if (!selectedTemplate) return
     const remaining = getDailyRemaining()
-    if (remaining <= 0) {
-      setImportError('Daily sending limit reached (1000 messages). Try again tomorrow.')
-      return
-    }
-
     if (recipients.length > remaining) {
-      setImportError(`Only ${remaining} messages remaining in today's quota. Reduce recipients or try again tomorrow.`)
+      alert(`Daily limit exceeded! You can only send ${remaining} more messages today.`)
       return
     }
 
@@ -306,11 +345,26 @@ export default function BroadcastWindow({
   // ─── Confirmed Send ───────────────────────────────────────────
   const handleConfirmedSend = async () => {
     setShowConfirm(false)
-    const message = draft.trim()
-    const imageUrl = attachedImage?.url || null
     setIsSending(true)
+    setIsPaused(false)
     abortRef.current = false
+    pauseRef.current = false
     setSendProgress({ sent: 0, failed: 0, total: recipients.length })
+
+    const userId = auth.currentUser?.uid || 'default_user'
+    const docRef = doc(botDb, 'active_campaigns', userId)
+
+    // Save initial state to Firebase
+    try {
+      await setDoc(docRef, {
+        recipients: recipients,
+        template_name: selectedTemplate,
+        progress: { sent: 0, failed: 0, total: recipients.length },
+        updatedAt: serverTimestamp()
+      })
+    } catch (err) {
+      console.error('Failed to init active campaign:', err)
+    }
 
     let sent = 0
     let failed = 0
@@ -321,17 +375,31 @@ export default function BroadcastWindow({
       const batch = recipients.slice(i, i + BATCH_SIZE)
       const results = await Promise.allSettled(
         batch.map(async (phone) => {
-          const payload = { phone, message }
-          if (imageUrl) payload.imageUrl = imageUrl
-          const res = await fetch(`${import.meta.env.VITE_BOT_SERVER_URL}/send`, {
+          const token = await auth.currentUser?.getIdToken()
+          const payload = { phone: phone, template_name: selectedTemplate }
+          const res = await fetch(`${import.meta.env.VITE_BOT_SERVER_URL}/api/marketing/broadcast`, {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
-              'X-API-Secret': import.meta.env.VITE_BOT_API_SECRET || ''
+              'X-API-Secret': import.meta.env.VITE_BOT_API_SECRET || '',
+              'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify(payload),
           })
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+          // Log to chat_history to immediately show in Live Chat
+          try {
+            await addDoc(collection(botDb, 'chat_history'), {
+              phone: phone,
+              message: `[Campaign Sent: ${selectedTemplate}]`,
+              sender: 'bot',
+              timestamp: serverTimestamp(),
+              channel: 'marketing'
+            })
+          } catch (logErr) {
+            console.error('Failed to log to chat history:', logErr)
+          }
         })
       )
 
@@ -341,9 +409,26 @@ export default function BroadcastWindow({
       }
       setSendProgress({ sent, failed, total: recipients.length })
 
+      // Update Firebase crash recovery state
+      const remainingRecipients = recipients.slice(i + BATCH_SIZE)
+      try {
+        await updateDoc(docRef, {
+          recipients: remainingRecipients,
+          progress: { sent, failed, total: recipients.length },
+          updatedAt: serverTimestamp()
+        })
+      } catch (err) {
+        console.error('Failed to update active campaign:', err)
+      }
+
       // Delay between batches
       if (i + BATCH_SIZE < recipients.length && !abortRef.current) {
         await new Promise(resolve => setTimeout(resolve, BATCH_DELAY_MS))
+      }
+
+      // Check for pause
+      while (pauseRef.current && !abortRef.current) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
       }
     }
 
@@ -353,13 +438,25 @@ export default function BroadcastWindow({
     setCooldownLeft(COOLDOWN_MS)
     startCooldownTimer()
 
+    // Cleanup active campaign from Firebase if finished or manually stopped
+    try {
+      await deleteDoc(docRef)
+    } catch (err) {}
+
     setIsSending(false)
-    await onSend(message, { sent, failed, recipients: recipients, imageUrl })
-    handleRemoveImage()
+    await onSend({ sent, failed, recipients: recipients, template: selectedTemplate })
   }
 
-  const handleAbort = () => {
+  const handleAbort = async () => {
     abortRef.current = true
+    pauseRef.current = false
+    setIsPaused(false)
+    
+    // Cleanup active campaign
+    const userId = auth.currentUser?.uid || 'default_user'
+    try {
+      await deleteDoc(doc(botDb, 'active_campaigns', userId))
+    } catch(e) {}
   }
 
   const handleRemoveImported = () => {
@@ -373,8 +470,6 @@ export default function BroadcastWindow({
   const progressPct = sendProgress.total > 0 ? Math.round(((sendProgress.sent + sendProgress.failed) / sendProgress.total) * 100) : 0
   const dailyRemaining = getDailyRemaining()
   const cooldownSec = Math.ceil(cooldownLeft / 1000)
-  const cooldownMin = Math.floor(cooldownSec / 60)
-  const cooldownSecRemainder = cooldownSec % 60
 
   return (
     <div className={cn(
@@ -406,14 +501,10 @@ export default function BroadcastWindow({
                   {dailyRemaining - recipients.length} after this
                 </span>
               </div>
-              <div className="px-3 py-2 rounded-lg bg-surface-900">
-                <p className="text-[11px] text-surface-400 mb-1">Message preview:</p>
-                <p className="text-[12px] text-surface-200 line-clamp-3">"{draft.trim()}"</p>
-              </div>
               <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/15">
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
                 <p className="text-[11px] text-amber-300 leading-relaxed">
-                  Messages will be sent via WhatsApp. Ensure recipients have opted in to receive marketing messages. A 5-minute cooldown will apply after this campaign.
+                  Messages will be sent via WhatsApp. Ensure recipients have opted in.
                 </p>
               </div>
             </div>
@@ -467,24 +558,75 @@ export default function BroadcastWindow({
       {/* ─── Main Area ─── */}
       <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col items-center">
         <div className="w-full max-w-2xl space-y-5">
-
-          {/* ─── Cooldown Banner ─── */}
-          {cooldownLeft > 0 && !isSending && (
-            <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/15">
-              <Clock className="w-4 h-4 text-amber-400 shrink-0" />
-              <p className="text-[12px] text-amber-300">
-                <strong>Cooldown active.</strong> Next campaign available in {cooldownMin > 0 ? `${cooldownMin}m ` : ''}{cooldownSecRemainder}s
-              </p>
+          {isLoadingCampaign ? (
+            <div className="flex flex-col items-center justify-center py-20 text-surface-400 gap-4">
+              <Loader2 className="w-8 h-8 animate-spin text-brand-500" />
+              <p className="text-sm font-semibold">Checking for active campaigns...</p>
             </div>
-          )}
+          ) : activeCampaign ? (
+            <div className="bg-[#0d1117] border border-amber-500/30 rounded-2xl p-8 shadow-xl mt-4">
+              <div className="flex flex-col items-center text-center gap-5">
+                <div className="w-16 h-16 rounded-2xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+                  <AlertTriangle className="w-8 h-8 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white mb-2">Unfinished Campaign Detected</h3>
+                  <p className="text-[13px] text-surface-400 max-w-md mx-auto leading-relaxed">
+                    You have a paused campaign with <strong className="text-white">{activeCampaign.recipients.length}</strong> recipients remaining. Would you like to resume sending?
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 mt-4 w-full max-w-sm">
+                  <button
+                    onClick={handleDiscardCampaign}
+                    className="flex-1 px-4 py-3 rounded-xl bg-white/[0.05] text-surface-300 text-[13px] font-semibold hover:bg-white/10 transition-colors border border-white/[0.05]"
+                  >
+                    Discard
+                  </button>
+                  <button
+                    onClick={handleResumeCampaign}
+                    className="flex-1 px-4 py-3 rounded-xl bg-amber-500 text-[#0d1117] text-[13px] font-bold hover:bg-amber-400 transition-colors shadow-lg shadow-amber-500/20"
+                  >
+                    Resume Campaign
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* ─── Add Recipients Card ─── */}
+              <div className="bg-[#0d1117] border border-white/[0.06] rounded-2xl p-6 shadow-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-sm font-semibold text-white">Add Recipients</h4>
+              {isSending && <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />}
+            </div>
 
-          {/* ─── Excel Import Card ─── */}
-          <div className="bg-[#0d1117] border border-white/[0.06] rounded-2xl p-6 shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-sm font-semibold text-white flex items-center gap-2">
-                <FileSpreadsheet className="w-4 h-4 text-brand-400" />
-                Import from Excel
-              </h4>
+            <div className="flex flex-col gap-4 mb-4">
+              {/* Manual Input */}
+              <form onSubmit={handleAddManualPhone} className="flex gap-2">
+                <input
+                  type="text"
+                  value={manualPhone}
+                  onChange={(e) => setManualPhone(e.target.value)}
+                  placeholder="Enter phone number..."
+                  className="flex-1 bg-surface-900 border border-white/[0.08] rounded-lg px-3 py-2 text-[13px] text-white placeholder:text-surface-500 focus:outline-none focus:ring-1 focus:ring-brand-500/50"
+                  disabled={isSending}
+                />
+                <button
+                  type="submit"
+                  disabled={isSending || !manualPhone.trim()}
+                  className="px-4 py-2 rounded-lg bg-surface-800 text-white text-[12px] font-semibold hover:bg-surface-700 transition-colors border border-white/[0.06] disabled:opacity-50"
+                >
+                  Add
+                </button>
+              </form>
+
+              <div className="flex items-center gap-4">
+                <div className="h-px bg-white/[0.06] flex-1"></div>
+                <span className="text-[10px] text-surface-500 font-semibold uppercase tracking-wider">OR</span>
+                <div className="h-px bg-white/[0.06] flex-1"></div>
+              </div>
+
+              {/* Excel Upload */}
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isSending}
@@ -500,13 +642,6 @@ export default function BroadcastWindow({
                 onChange={handleFileUpload}
                 className="hidden"
               />
-            </div>
-
-            <div className="flex items-start gap-2 text-[11px] text-surface-500 mb-3">
-              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-surface-600" />
-              <p>
-                Upload .xlsx, .xls, or .csv (max {MAX_FILE_SIZE_MB} MB). Phone numbers auto-detected. 10-digit numbers prefixed with +91. Max {MAX_RECIPIENTS} recipients per campaign.
-              </p>
             </div>
 
             {importError && (
@@ -533,16 +668,6 @@ export default function BroadcastWindow({
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                {(rejectedCount > 0 || cappedCount > 0) && (
-                  <div className="flex flex-wrap gap-3 text-[11px]">
-                    {rejectedCount > 0 && (
-                      <span className="text-amber-400">⚠ {rejectedCount} invalid numbers skipped</span>
-                    )}
-                    {cappedCount > 0 && (
-                      <span className="text-amber-400">⚠ {cappedCount} numbers trimmed (max {MAX_RECIPIENTS})</span>
-                    )}
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -553,16 +678,11 @@ export default function BroadcastWindow({
               <h4 className="text-sm font-semibold text-white">
                 Recipients ({recipients.length}/{MAX_RECIPIENTS})
               </h4>
-              {recipients.length >= MAX_RECIPIENTS && (
-                <span className="text-[10px] text-amber-400 font-semibold px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/15">
-                  LIMIT REACHED
-                </span>
-              )}
             </div>
             <div className="flex flex-wrap gap-2 max-h-[180px] overflow-y-auto pr-2 custom-scrollbar">
               {recipients.length === 0 ? (
-                <p className="text-sm text-surface-500">No recipients yet. Upload an Excel file or select contacts from the sidebar.</p>
-              ) : recipients.length > 50 ? (
+                <p className="text-sm text-surface-500">No recipients yet.</p>
+              ) : (
                 <div className="text-[12px] text-surface-300 space-y-2 w-full">
                   <div className="flex flex-wrap gap-2">
                     {recipients.slice(0, 20).map(phone => (
@@ -571,21 +691,10 @@ export default function BroadcastWindow({
                       </span>
                     ))}
                     <span className="px-2.5 py-1 rounded-md bg-brand-600/20 border border-brand-500/20 text-[11px] text-brand-400 font-semibold">
-                      +{recipients.length - 20} more
+                      +{Math.max(0, recipients.length - 20)} more
                     </span>
                   </div>
                 </div>
-              ) : (
-                recipients.map(phone => {
-                  const contact = contacts.find(c => c.phone === phone)
-                  return (
-                    <div key={phone} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-800 border border-white/[0.04] text-[12px]">
-                      <span className="font-semibold text-surface-200 truncate max-w-[120px]">
-                        {contact?.name || formatPhoneDisplay(phone)}
-                      </span>
-                    </div>
-                  )
-                })
               )}
             </div>
           </div>
@@ -593,87 +702,32 @@ export default function BroadcastWindow({
           {/* ─── Compose & Send ─── */}
           <div className="bg-[#0d1117] border border-white/[0.06] rounded-2xl p-6 shadow-xl">
             <div className="flex items-center justify-between mb-4">
-              <h4 className="text-sm font-semibold text-white">Compose Message</h4>
-              <span className={cn(
-                "text-[11px] font-mono tabular-nums",
-                draft.length > MAX_MESSAGE_LENGTH * 0.9 ? "text-amber-400" : "text-surface-500"
-              )}>
-                {draft.length}/{MAX_MESSAGE_LENGTH}
-              </span>
+              <h4 className="text-sm font-semibold text-white">Select Campaign Template</h4>
             </div>
-            <textarea
-              value={draft}
-              onChange={handleDraftChange}
-              disabled={isSending}
-              placeholder="Type your marketing message here..."
-              className="w-full h-32 bg-surface-950 border border-white/[0.08] rounded-xl p-4 text-[13px] text-white placeholder:text-surface-500 focus:outline-none focus:ring-2 focus:ring-brand-500/50 resize-none disabled:opacity-50"
-            />
 
-            {/* Media Toolbar */}
-            <div className="flex items-center gap-2 mb-4 mt-2">
-              <button
-                onClick={() => imageInputRef.current?.click()}
-                disabled={isSending || !!attachedImage}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors border",
-                  attachedImage
-                    ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 cursor-default"
-                    : "bg-white/[0.04] border-white/[0.06] text-surface-400 hover:bg-white/[0.08] hover:text-white disabled:opacity-50"
-                )}
-              >
-                <Image className="w-3.5 h-3.5" />
-                {attachedImage ? 'Image attached' : 'Attach Image'}
-              </button>
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={handleImageSelect}
-                className="hidden"
-              />
-              <button
-                onClick={handleInsertLink}
+            <div className="relative mb-6">
+              <select
+                value={selectedTemplate}
+                onChange={(e) => setSelectedTemplate(e.target.value)}
                 disabled={isSending}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-surface-400 text-[11px] font-semibold hover:bg-white/[0.08] hover:text-white transition-colors disabled:opacity-50"
+                className="w-full bg-surface-950 border border-white/[0.08] rounded-xl px-4 py-3 text-[13px] text-white focus:outline-none focus:ring-2 focus:ring-brand-500/50 appearance-none disabled:opacity-50"
               >
-                <Link2 className="w-3.5 h-3.5" />
-                Insert Link
-              </button>
-              <span className="text-[10px] text-surface-600 ml-1">JPG, PNG, WebP · max {MAX_IMAGE_SIZE_MB} MB</span>
+                <option value="fo_new_customers">New Customer Campaign (₹100 Credit)</option>
+                <option value="for_existingusers">Retention Campaign (₹80 Credit)</option>
+              </select>
             </div>
-
-            {/* Image Preview */}
-            {attachedImage && (
-              <div className="mb-4 relative inline-block">
-                <div className="relative rounded-xl overflow-hidden border border-white/[0.08] bg-surface-900">
-                  <img
-                    src={attachedImage.preview}
-                    alt="Attachment preview"
-                    className="max-h-[160px] max-w-full object-contain rounded-xl"
-                  />
-                  {attachedImage.uploading && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-xl">
-                      <div className="flex items-center gap-2 text-[12px] text-white">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Uploading...
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <button
-                  onClick={handleRemoveImage}
-                  disabled={isSending}
-                  className="absolute -top-2 -right-2 flex items-center justify-center w-6 h-6 rounded-full bg-red-500/90 text-white hover:bg-red-500 transition-colors shadow-lg disabled:opacity-50"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
 
             {/* Send Progress */}
             {isSending && (
-              <div className="mb-4 space-y-2">
-                <div className="flex items-center justify-between text-[12px]">
+              <div className="mb-4 space-y-4">
+                <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[12px] text-amber-300 leading-relaxed">
+                    <strong>Warning:</strong> Do not minimize this tab or switch windows while sending. Browsers put inactive tabs to sleep, which will pause your campaign!
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-[12px]">
                   <span className="text-surface-400 flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5 animate-spin" />
                     Sending in batches of {BATCH_SIZE} ({BATCH_DELAY_MS / 1000}s delay)...
@@ -694,6 +748,7 @@ export default function BroadcastWindow({
                     <span className="text-red-400">{sendProgress.failed} failed</span>
                   )}
                 </div>
+                </div>
               </div>
             )}
             
@@ -703,16 +758,29 @@ export default function BroadcastWindow({
               </p>
               <div className="flex items-center gap-2 shrink-0">
                 {isSending && (
-                  <button
-                    onClick={handleAbort}
-                    className="px-4 py-2.5 rounded-xl bg-red-500/20 text-red-400 font-semibold text-[12px] hover:bg-red-500/30 transition-colors border border-red-500/20"
-                  >
-                    Stop
-                  </button>
+                  <>
+                    <button
+                      onClick={handlePauseToggle}
+                      className={cn(
+                        "px-4 py-2.5 rounded-xl font-semibold text-[12px] transition-colors border",
+                        isPaused
+                          ? "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border-emerald-500/20"
+                          : "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 border-amber-500/20"
+                      )}
+                    >
+                      {isPaused ? 'Resume' : 'Pause'}
+                    </button>
+                    <button
+                      onClick={handleAbort}
+                      className="px-4 py-2.5 rounded-xl bg-red-500/20 text-red-400 font-semibold text-[12px] hover:bg-red-500/30 transition-colors border border-red-500/20"
+                    >
+                      Stop
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={handlePreSend}
-                  disabled={isSending || recipients.length === 0 || !draft.trim() || cooldownLeft > 0 || (attachedImage && attachedImage.uploading)}
+                  disabled={isSending || recipients.length === 0 || !selectedTemplate || cooldownLeft > 0}
                   className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-brand-600 text-white font-semibold text-[13px] hover:bg-brand-500 transition-all disabled:opacity-50 shadow-lg shadow-brand-500/25"
                 >
                   {isSending ? (
@@ -723,7 +791,7 @@ export default function BroadcastWindow({
                   ) : cooldownLeft > 0 ? (
                     <>
                       <Clock className="w-4 h-4" />
-                      Cooldown {cooldownMin}:{String(cooldownSecRemainder).padStart(2, '0')}
+                      Cooldown {Math.floor(Math.ceil(cooldownLeft / 1000) / 60)}:{String(Math.ceil(cooldownLeft / 1000) % 60).padStart(2, '0')}
                     </>
                   ) : (
                     <>
@@ -735,7 +803,8 @@ export default function BroadcastWindow({
               </div>
             </div>
           </div>
-
+            </>
+          )}
         </div>
       </div>
     </div>

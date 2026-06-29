@@ -26,7 +26,8 @@ export default function LiveChat() {
   const [botPaused, setBotPaused] = useState(false)
   const [customerNames, setCustomerNames] = useState({})
   const [isBroadcastMode, setIsBroadcastMode] = useState(false)
-  const [broadcastRecipients, setBroadcastRecipients] = useState([])
+  const [selectedLeads, setSelectedLeads] = useState([])
+  const [chatFilter, setChatFilter] = useState('support') // 'support' or 'all'
 
   // Fetch customer names from users and orders (default DB) with caching
   useEffect(() => {
@@ -103,6 +104,14 @@ export default function LiveChat() {
       const contactMap = new Map()
       snapshot.docs.forEach((docSnap) => {
         const data = docSnap.data()
+        // Filter logic based on channel
+        if (chatFilter === 'support' && data.channel === 'marketing') {
+          return // Skip marketing messages
+        }
+        if (chatFilter === 'marketing' && data.channel !== 'marketing') {
+          return // Skip support messages
+        }
+
         if (!contactMap.has(data.phone)) {
           const cleanPhone = data.phone.replace(/\D/g, '')
           contactMap.set(data.phone, {
@@ -130,7 +139,7 @@ export default function LiveChat() {
       toast.error('Failed to load recent chats')
     })
     return () => unsub()
-  }, [customerNames])
+  }, [customerNames, chatFilter])
 
   // Fetch messages for selected phone (from botDb)
   useEffect(() => {
@@ -170,12 +179,14 @@ export default function LiveChat() {
     setDraft('')
 
     try {
+      const token = await auth.currentUser?.getIdToken()
       // Send via Bot API to WhatsApp (the backend will log it to Firestore)
       await fetch(`${import.meta.env.VITE_BOT_SERVER_URL}/send`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'X-API-Secret': import.meta.env.VITE_BOT_API_SECRET || ''
+          'X-API-Secret': import.meta.env.VITE_BOT_API_SECRET || '',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ phone: selectedPhone, message }),
       })
@@ -186,16 +197,16 @@ export default function LiveChat() {
     }
   }
 
-  const handleBroadcastSend = async (messageText, stats) => {
+  const handleBroadcastSend = async (stats) => {
     // BroadcastWindow handles actual sending in batches.
-    const { sent, failed, recipients: recipientPhones, imageUrl } = stats || { sent: 0, failed: 0, recipients: [], imageUrl: null }
+    const { sent, failed, recipients: recipientPhones, template } = stats || { sent: 0, failed: 0, recipients: [], template: null }
     const total = sent + failed
 
-    // Log campaign to Firestore for audit trail (use default db which has write access)
+    // Log campaign to Firestore for audit trail (use botDb which maps to andesdb)
     try {
       const logEntry = {
         sentBy: auth.currentUser?.email || 'unknown',
-        message: messageText,
+        template: template || 'unknown',
         recipientCount: recipientPhones?.length || total,
         sentCount: sent,
         failedCount: failed,
@@ -203,8 +214,7 @@ export default function LiveChat() {
         timestamp: serverTimestamp(),
         aborted: total < (recipientPhones?.length || 0),
       }
-      if (imageUrl) logEntry.imageUrl = imageUrl
-      await addDoc(collection(db, 'broadcast_logs'), logEntry)
+      await addDoc(collection(botDb, 'broadcast_logs'), logEntry)
     } catch (logErr) {
       console.error('Failed to log broadcast campaign:', logErr)
     }
@@ -219,7 +229,7 @@ export default function LiveChat() {
     
     // Reset and close
     setIsBroadcastMode(false)
-    setBroadcastRecipients([])
+    setSelectedLeads([])
   }
 
   const toggleBot = async () => {
@@ -253,21 +263,23 @@ export default function LiveChat() {
           setIsBroadcastMode(!isBroadcastMode)
           if (!isBroadcastMode) setSelectedPhone(null) // clear normal chat when entering broadcast
         }}
-        broadcastRecipients={broadcastRecipients}
-        toggleRecipient={(phone) => {
-          setBroadcastRecipients(prev => 
+        selectedLeads={selectedLeads}
+        toggleLead={(phone) => {
+          setSelectedLeads(prev => 
             prev.includes(phone) ? prev.filter(p => p !== phone) : [...prev, phone]
           )
         }}
+        chatFilter={chatFilter}
+        setChatFilter={setChatFilter}
       />
       {isBroadcastMode ? (
         <BroadcastWindow
-          recipients={broadcastRecipients}
+          recipients={selectedLeads}
           contacts={contacts}
-          setRecipients={setBroadcastRecipients}
+          setRecipients={setSelectedLeads}
           onCancel={() => {
             setIsBroadcastMode(false)
-            setBroadcastRecipients([])
+            setSelectedLeads([])
           }}
           onSend={handleBroadcastSend}
           isMobileHidden={!isBroadcastMode}

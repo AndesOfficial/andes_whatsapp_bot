@@ -11,8 +11,10 @@ export default function ContactList({
   isMobileHidden,
   isBroadcastMode,
   toggleBroadcastMode,
-  broadcastRecipients,
-  toggleRecipient
+  selectedLeads,
+  toggleLead,
+  chatFilter,
+  setChatFilter
 }) {
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -65,6 +67,43 @@ export default function ContactList({
             </button>
           )}
         </div>
+
+        {/* Filter Toggle */}
+        <div className="flex bg-surface-900 rounded-lg p-1 mt-3 border border-white/[0.04]">
+          <button
+            onClick={() => setChatFilter('support')}
+            className={cn(
+              "flex-1 py-1.5 text-[10px] font-semibold rounded-md transition-all",
+              chatFilter === 'support' 
+                ? "bg-brand-500/20 text-brand-400 shadow-sm" 
+                : "text-surface-400 hover:text-surface-200"
+            )}
+          >
+            Support
+          </button>
+          <button
+            onClick={() => setChatFilter('marketing')}
+            className={cn(
+              "flex-1 py-1.5 text-[10px] font-semibold rounded-md transition-all",
+              chatFilter === 'marketing' 
+                ? "bg-emerald-500/20 text-emerald-400 shadow-sm" 
+                : "text-surface-400 hover:text-surface-200"
+            )}
+          >
+            Marketing
+          </button>
+          <button
+            onClick={() => setChatFilter('all')}
+            className={cn(
+              "flex-1 py-1.5 text-[10px] font-semibold rounded-md transition-all",
+              chatFilter === 'all' 
+                ? "bg-surface-800 text-white shadow-sm border border-white/[0.04]" 
+                : "text-surface-400 hover:text-surface-200"
+            )}
+          >
+            All
+          </button>
+        </div>
       </div>
 
       {/* Contact List */}
@@ -77,7 +116,7 @@ export default function ContactList({
         ) : (
           filteredContacts.map((contact, i) => {
             const isSelected = isBroadcastMode 
-              ? broadcastRecipients.includes(contact.phone)
+              ? selectedLeads.includes(contact.phone)
               : selectedPhone === contact.phone
 
             return (
@@ -85,7 +124,7 @@ export default function ContactList({
                 key={contact.phone}
                 onClick={() => {
                   if (isBroadcastMode) {
-                    toggleRecipient(contact.phone)
+                    toggleLead(contact.phone)
                   } else {
                     setSelectedPhone(contact.phone)
                   }
