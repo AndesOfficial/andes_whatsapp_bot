@@ -11,7 +11,7 @@ import { collection, addDoc, serverTimestamp, doc, setDoc, getDoc, updateDoc, de
 const MAX_FILE_SIZE_MB = 5
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 const MAX_CELLS_SCAN = 10000
-const MAX_RECIPIENTS = 500
+const MAX_RECIPIENTS = 2000
 const MAX_MESSAGE_LENGTH = 1024
 const BATCH_SIZE = 10
 const BATCH_DELAY_MS = 3000 // 3s between batches
