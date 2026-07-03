@@ -120,7 +120,7 @@ export default function BroadcastWindow({
   setRecipients,
   isMobileHidden,
 }) {
-  const [selectedTemplate, setSelectedTemplate] = useState('fo_new_customers')
+  const [selectedTemplate, setSelectedTemplate] = useState('andes_new_order')
   const [manualPhone, setManualPhone] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
@@ -712,7 +712,7 @@ export default function BroadcastWindow({
                 disabled={isSending}
                 className="w-full bg-surface-950 border border-white/[0.08] rounded-xl px-4 py-3 text-[13px] text-white focus:outline-none focus:ring-2 focus:ring-brand-500/50 appearance-none disabled:opacity-50"
               >
-                <option value="fo_new_customers">New Customer Campaign (₹100 Credit)</option>
+                <option value="andes_new_order">New Customer Campaign (₹100 Credit)</option>
                 <option value="for_existingusers">Retention Campaign (₹80 Credit)</option>
               </select>
             </div>
