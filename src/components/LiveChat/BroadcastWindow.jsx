@@ -412,11 +412,11 @@ export default function BroadcastWindow({
       // Update Firebase crash recovery state
       const remainingRecipients = recipients.slice(i + BATCH_SIZE)
       try {
-        await updateDoc(docRef, {
+        await setDoc(docRef, {
           recipients: remainingRecipients,
           progress: { sent, failed, total: recipients.length },
           updatedAt: serverTimestamp()
-        })
+        }, { merge: true })
       } catch (err) {
         console.error('Failed to update active campaign:', err)
       }
