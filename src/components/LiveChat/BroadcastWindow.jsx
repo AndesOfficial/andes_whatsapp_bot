@@ -714,7 +714,7 @@ export default function BroadcastWindow({
               >
                 <option value="fo_new_customers">New Customer Campaign (₹100 Credit)</option>
                 <option value="for_existingusers">Retention Campaign (₹80 Credit)</option>
-                <option value="independence_day">Independence Day Greeting (Aug 15)</option>
+                <option value="independence_2026">Independence Day Greeting (Aug 15)</option>
               </select>
             </div>
 
